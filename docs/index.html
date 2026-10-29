@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Takes</title>
+<meta name="description" content="A songwriting sketchpad: record ideas, layer takes, write lyrics and chords.">
+<meta name="theme-color" content="#13181e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#eef1f3" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Takes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<section id="library" class="view">
+  <header class="lib-head">
+    <h1 class="brand">Takes</h1>
+    <p class="tagline">Songwriting sketchpad</p>
+  </header>
+
+  <div id="installHint" class="install-hint" hidden>
+    <p>Put Takes on your home screen: tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.</p>
+    <button id="hideHint" class="btn ghost small" type="button">Got it</button>
+  </div>
+
+  <button id="quickRec" class="quick-rec" type="button">
+    <span class="qr-dot" aria-hidden="true"></span>
+    <span class="qr-text"><strong>Record an idea</strong><small>One tap. Saved as you go.</small></span>
+  </button>
+
+  <div class="list-head">
+    <h2>Songs</h2>
+    <button id="newSong" class="btn ghost small" type="button">New song</button>
+  </div>
+  <ul id="songList" class="song-list"></ul>
+  <p id="emptyLib" class="empty" hidden>No songs yet. Tap the red button and sing, hum or play something.</p>
+</section>
+
+<section id="song" class="view song-view" hidden>
+  <header class="song-head">
+    <button id="back" class="icon-btn" type="button" aria-label="Back to songs">
+      <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <input id="songTitle" class="title-input" aria-label="Song title" autocomplete="off">
+    <button id="songMenu" class="icon-btn" type="button" aria-label="Song options">
+      <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg>
+    </button>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button id="tab-tracks" role="tab" data-tab="tracks" aria-selected="true" type="button">Tracks</button>
+    <button id="tab-lyrics" role="tab" data-tab="lyrics" aria-selected="false" type="button">Lyrics</button>
+    <button id="tab-chords" role="tab" data-tab="chords" aria-selected="false" type="button">Chords</button>
+  </nav>
+
+  <main class="panes">
+    <div id="pane-tracks" class="pane" role="tabpanel">
+      <div id="trackList" class="track-list"></div>
+      <p id="emptyTracks" class="empty">No takes yet. Press the red button below to record. Use headphones when you record over other takes.</p>
+    </div>
+
+    <div id="pane-lyrics" class="pane" role="tabpanel" hidden>
+      <div class="chips" id="sectionChips">
+        <button type="button" data-sec="Verse">+ Verse</button>
+        <button type="button" data-sec="Pre-chorus">+ Pre-chorus</button>
+        <button type="button" data-sec="Chorus">+ Chorus</button>
+        <button type="button" data-sec="Bridge">+ Bridge</button>
+      </div>
+      <textarea id="lyrics" class="lyrics" placeholder="Write your lyrics here. They save as you type." spellcheck="true"></textarea>
+      <p id="lyricsSaved" class="saved-note">Saved</p>
+    </div>
+
+    <div id="pane-chords" class="pane" role="tabpanel" hidden>
+      <div class="key-row">
+        <label class="field">Key
+          <select id="keyRoot"></select>
+        </label>
+        <label class="field">Scale
+          <select id="keyMode">
+            <option value="major">Major</option>
+            <option value="minor">Minor</option>
+          </select>
+        </label>
+        <label class="field">BPM
+          <input id="bpm" type="number" inputmode="numeric" min="40" max="240" step="1">
+        </label>
+      </div>
+
+      <h3 class="label">Tap a chord to add it</h3>
+      <div id="palette" class="palette"></div>
+
+      <div class="prog-head">
+        <h3 class="label">Progression <span class="hint">one bar each · tap to remove</span></h3>
+        <button id="clearProg" class="btn ghost small" type="button">Clear</button>
+      </div>
+      <div id="prog" class="prog"></div>
+
+      <h3 class="label">Starters</h3>
+      <div id="starters" class="chips"></div>
+
+      <label class="switch">
+        <input id="chordsInMix" type="checkbox">
+        <span>Play chords with tracks and while recording</span>
+      </label>
+    </div>
+  </main>
+
+  <div class="meter" aria-hidden="true"><span id="meterFill"></span></div>
+  <footer class="transport">
+    <div class="counter-wrap">
+      <div id="counter" class="counter">0:00.0</div>
+      <div id="status" class="status">Ready</div>
+    </div>
+    <button id="metro" class="icon-btn tbtn" type="button" aria-pressed="false" aria-label="Metronome and count-in">
+      <svg viewBox="0 0 24 24"><path d="M9.2 3.5h5.6L19 20.5H5z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><path d="M12 16l5-8.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+    </button>
+    <button id="rewind" class="icon-btn tbtn" type="button" aria-label="Go to start">
+      <svg viewBox="0 0 24 24"><path d="M6 5v14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M19 6.5v11L10 12z" fill="currentColor"/></svg>
+    </button>
+    <button id="play" class="icon-btn tbtn play" type="button" aria-label="Play"></button>
+    <button id="rec" class="rec-btn" type="button" aria-label="Record"><span></span></button>
+  </footer>
+</section>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-backdrop" data-close></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true" id="sheetPanel"></div>
+</div>
+<div id="toast" class="toast" role="status" hidden></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
