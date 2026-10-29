@@ -1,12 +1,12 @@
 // Network first so updates arrive on the next launch; cache when offline.
-const CACHE = 'takes-v2';
+const CACHE = 'takes-v3';
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'band.js', 'recorder-worklet.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {

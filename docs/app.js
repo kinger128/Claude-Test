@@ -942,6 +942,20 @@ const standalone = matchMedia('(display-mode: standalone)').matches || navigator
 if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent) && !pref.get('hintDone', false)) $('#installHint').hidden = false;
 $('#hideHint').addEventListener('click', () => { pref.set('hintDone', true); $('#installHint').hidden = true; });
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+// Updates: check on every launch and when the app comes back to the front,
+// then reload into the new version unless a take is playing or recording.
+if ('serviceWorker' in navigator) {
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+  }).catch(() => {});
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    if (T.playing || T.recording) { toast('Takes was updated. Close and reopen it to use the new version.', 5000); return; }
+    reloading = true;
+    location.reload();
+  });
+}
 
 showLibrary().catch(() => toast('Storage is not available. Private browsing can block it.'));
