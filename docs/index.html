@@ -60,6 +60,7 @@
     <button id="tab-tracks" role="tab" data-tab="tracks" aria-selected="true" type="button">Tracks</button>
     <button id="tab-lyrics" role="tab" data-tab="lyrics" aria-selected="false" type="button">Lyrics</button>
     <button id="tab-chords" role="tab" data-tab="chords" aria-selected="false" type="button">Chords</button>
+    <button id="tab-band" role="tab" data-tab="band" aria-selected="false" type="button">Band</button>
   </nav>
 
   <main class="panes">
@@ -107,10 +108,19 @@
       <h3 class="label">Starters</h3>
       <div id="starters" class="chips"></div>
 
-      <label class="switch">
-        <input id="chordsInMix" type="checkbox">
-        <span>Play chords with tracks and while recording</span>
-      </label>
+      <p class="note">The band plays these chords. Turn instruments on in the Band tab.</p>
+    </div>
+
+    <div id="pane-band" class="pane" role="tabpanel" hidden>
+      <section class="auto-card">
+        <h3>Auto band from your hum</h3>
+        <p>Pick a take where you hummed or sang the tune. Takes finds the key and a chord for each bar, then starts drums, bass and guitar. Hum with the click on for the tightest fit.</p>
+        <div class="auto-row">
+          <select id="autoTake" aria-label="Take to analyze"></select>
+          <button id="autoBuild" class="btn primary" type="button">Build band</button>
+        </div>
+      </section>
+      <div id="instruments" class="instruments"></div>
     </div>
   </main>
 

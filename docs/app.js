@@ -1,26 +1,16 @@
 // Takes: a songwriting sketchpad. Songs, takes, lyrics and chords live in
 // IndexedDB on this device. Audio runs through one shared AudioContext.
 
+import {
+  NOTE, MODES, chordInfo, defaultBand, keysChord, makeBand, setBandLevels, bandPlaying, scheduleStep,
+  DRUM_PATTERNS, BASS_PATTERNS, GUITAR_PATTERNS, KIT_NAMES, trackPitch, fitSong,
+} from './band.js';
+
 const $ = (s, r = document) => r.querySelector(s);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 
 const PPS = 50; // waveform peaks per second
-const NOTE = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
-const MODES = {
-  major: {
-    steps: [0, 2, 4, 5, 7, 9, 11], q: ['', 'm', 'm', '', '', 'm', 'dim'],
-    roman: ['I', 'ii', 'iii', 'IV', 'V', 'vi', 'vii°'],
-    starters: [[0, 4, 5, 3], [5, 3, 0, 4], [0, 5, 3, 4], [1, 4, 0, 0]],
-  },
-  minor: {
-    steps: [0, 2, 3, 5, 7, 8, 10], q: ['m', 'dim', '', 'm', 'm', '', ''],
-    roman: ['i', 'ii°', 'III', 'iv', 'v', 'VI', 'VII'],
-    starters: [[0, 5, 2, 6], [0, 3, 4, 0], [0, 6, 5, 6], [0, 5, 3, 4]],
-  },
-};
-const QUALITY = { '': [0, 4, 7], m: [0, 3, 7], dim: [0, 3, 6] };
-
 // ---------- settings (per device) ----------
 const pref = {
   get(k, d) { try { const v = localStorage.getItem('takes.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -86,33 +76,7 @@ async function bufferFor(t) {
   return buf;
 }
 
-const midiHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
-function chordNotes(deg) {
-  const m = MODES[S.song.mode];
-  const root = (S.song.key + m.steps[deg]) % 12;
-  const notes = QUALITY[m.q[deg]].map((i) => 57 + ((((root + i) - 57) % 12) + 12) % 12);
-  return { root, notes, bass: 36 + root, name: NOTE[root] + m.q[deg], roman: m.roman[deg] };
-}
-function playChord(c, dest, ch, t, dur) {
-  const out = c.createGain();
-  const lp = c.createBiquadFilter();
-  lp.type = 'lowpass'; lp.frequency.value = 1700; lp.Q.value = 0.4;
-  lp.connect(out); out.connect(dest);
-  const g = out.gain, end = t + dur;
-  g.setValueAtTime(0, t);
-  g.linearRampToValueAtTime(0.16, t + 0.03);
-  g.setTargetAtTime(0.1, t + 0.03, 0.4);
-  g.setValueAtTime(0.1, Math.max(t + 0.05, end - 0.08));
-  g.linearRampToValueAtTime(0, end + 0.04);
-  const voice = (freq, type, level) => {
-    const o = c.createOscillator(), v = c.createGain();
-    o.type = type; o.frequency.value = freq; v.gain.value = level;
-    o.connect(v); v.connect(lp);
-    o.start(t); o.stop(end + 0.1);
-  };
-  for (const n of ch.notes) { voice(midiHz(n), 'triangle', 0.5); voice(midiHz(n) * 1.003, 'sawtooth', 0.12); }
-  voice(midiHz(ch.bass), 'triangle', 0.7);
-}
+const chordNotes = (deg) => chordInfo(S.song, deg);
 function click(c, dest, t, accent) {
   const o = c.createOscillator(), g = c.createGain();
   o.type = 'square'; o.frequency.value = accent ? 1760 : 1100;
@@ -122,18 +86,14 @@ function click(c, dest, t, accent) {
   o.connect(g); g.connect(dest);
   o.start(t); o.stop(t + 0.06);
 }
-function chordForBar(c, dest, bar, t, dur) {
-  const prog = S.song.prog;
-  playChord(c, dest, chordNotes(prog[bar % prog.length]), t, dur);
-}
-
 // ---------- transport ----------
-const T = { playing: false, recording: false, busy: false, pos: 0, startPos: 0, startCtx: 0, voices: [], timer: 0, nextBeat: 0, countLeft: 0, countIn: 0, bus: null };
+const T = { playing: false, recording: false, busy: false, pos: 0, startPos: 0, startCtx: 0, voices: [], timer: 0, nextStep: 0, countLeft: 0, countIn: 0, bus: null, out: null };
 let R = null; // the take being recorded
 
 const beatLen = () => 60 / (S.song?.bpm || 90);
 const songEnd = () => S.tracks.reduce((m, t) => Math.max(m, t.start + t.duration), 0);
 const chordsActive = () => !!(S.song?.chordsInMix && S.song.prog.length);
+const bandOn = () => bandPlaying(S.song);
 const songTime = () => (T.playing ? T.startPos + (ctx.currentTime - T.startCtx) : T.pos);
 
 async function play({ countIn = 0 } = {}) {
@@ -144,7 +104,7 @@ async function play({ countIn = 0 } = {}) {
   const live = S.tracks.filter((t) => !t.muted);
   try { await Promise.all(live.map(bufferFor)); } catch { toast('One take could not be loaded.'); }
   T.busy = false;
-  if (!T.recording && !chordsActive() && !metroOn && T.pos >= songEnd() - 0.05) T.pos = 0;
+  if (!T.recording && !bandOn() && !metroOn && T.pos >= songEnd() - 0.05) T.pos = 0;
 
   const beat = beatLen();
   T.startPos = T.pos;
@@ -167,10 +127,11 @@ async function play({ countIn = 0 } = {}) {
     T.voices.push(src);
   }
   T.countIn = T.countLeft = countIn;
-  T.nextBeat = Math.ceil(T.startPos / beat - 1e-6);
+  T.out = makeBand(c, T.bus, S.song);
+  T.nextStep = Math.ceil(T.startPos / (beat / 4) - 1e-6);
   if (chordsActive()) {
     const barLen = 4 * beat, bar = Math.floor(T.startPos / barLen), into = T.startPos - bar * barLen;
-    if (into > 0.01 && barLen - into > 0.05) chordForBar(c, T.bus, bar, T.startCtx, barLen - into);
+    if (into > 0.01 && barLen - into > 0.05) keysChord(c, T.out.keys, chordNotes(S.song.prog[bar % S.song.prog.length]), T.startCtx, barLen - into);
   }
   T.playing = true;
   schedule();
@@ -188,16 +149,17 @@ function schedule() {
     click(c, T.bus, t, T.countLeft === T.countIn);
     T.countLeft--;
   }
+  const sd = beat / 4;
   for (;;) {
-    const t = T.startCtx + (T.nextBeat * beat - T.startPos);
+    const t = T.startCtx + (T.nextStep * sd - T.startPos);
     if (t > ahead) break;
     if (t >= c.currentTime - 0.02) {
-      if (metroOn) click(c, T.bus, t, T.nextBeat % 4 === 0);
-      if (chordsActive() && T.nextBeat % 4 === 0) chordForBar(c, T.bus, T.nextBeat / 4, t, 4 * beat);
+      if (metroOn && T.nextStep % 4 === 0) click(c, T.bus, t, T.nextStep % 16 === 0);
+      scheduleStep(c, T.out, S.song, T.nextStep, t, sd);
     }
-    T.nextBeat++;
+    T.nextStep++;
   }
-  if (!T.recording && !chordsActive() && !metroOn && songTime() > songEnd() + 0.15) {
+  if (!T.recording && !bandOn() && !metroOn && songTime() > songEnd() + 0.15) {
     stop().then(() => { T.pos = 0; renderTransport(); placePlayheads(); });
   }
 }
@@ -211,6 +173,7 @@ async function stop() {
   T.voices = [];
   const bus = T.bus;
   T.bus = null;
+  T.out = null;
   if (bus) { bus.gain.setTargetAtTime(0, ctx.currentTime, 0.015); setTimeout(() => bus.disconnect(), 300); }
   T.pos = Math.max(0, end);
   if (T.recording) await finishRecording();
@@ -367,7 +330,7 @@ function encodeWav(chs, sr) {
 async function exportMix() {
   const live = S.tracks.filter((t) => !t.muted);
   let end = live.reduce((m, t) => Math.max(m, t.start + t.duration), 0);
-  if (!end && chordsActive()) end = S.song.prog.length * 4 * beatLen();
+  if (!end && bandOn()) end = Math.max(S.song.prog.length, 4) * 4 * beatLen();
   if (!end) { toast('Record a take first.'); return; }
   closeSheet();
   toast('Mixing…', 60000);
@@ -385,9 +348,9 @@ async function exportMix() {
       s.connect(g);
       s.start(Math.max(0, t.start), Math.max(0, -t.start));
     }
-    if (chordsActive()) {
-      const barLen = 4 * beatLen();
-      for (let bar = 0; bar * barLen < end; bar++) chordForBar(oc, oc.destination, bar, bar * barLen, barLen);
+    if (bandOn()) {
+      const out = makeBand(oc, oc.destination, S.song), sd = beatLen() / 4;
+      for (let step = 0; step * sd < end; step++) scheduleStep(oc, out, S.song, step, step * sd, sd);
     }
     const out = await oc.startRendering();
     const wav = encodeWav([out.getChannelData(0), out.getChannelData(1)], sr);
@@ -463,11 +426,12 @@ async function showLibrary() {
 
 function newSongObj(title) {
   const now = Date.now();
-  return { id: uid(), title, createdAt: now, updatedAt: now, lyrics: '', key: 0, mode: 'major', bpm: 90, prog: [], chordsInMix: true, takes: 0, length: 0 };
+  return { id: uid(), title, createdAt: now, updatedAt: now, lyrics: '', key: 0, mode: 'major', bpm: 90, prog: [], chordsInMix: true, band: defaultBand(), takes: 0, length: 0 };
 }
 const ideaTitle = () => 'Idea · ' + new Date().toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
 async function openSong(song) {
+  song.band ??= defaultBand();
   S.song = song;
   S.tracks = (await tracksOf(song.id)).sort((a, b) => a.createdAt - b.createdAt);
   T.pos = 0;
@@ -485,9 +449,10 @@ async function openSong(song) {
 function showTab(name) {
   S.tab = name;
   for (const b of document.querySelectorAll('.tabs [role=tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === name));
-  for (const p of ['tracks', 'lyrics', 'chords']) $('#pane-' + p).hidden = p !== name;
+  for (const p of ['tracks', 'lyrics', 'chords', 'band']) $('#pane-' + p).hidden = p !== name;
   if (name === 'tracks') renderTracks();
   if (name === 'chords') highlightChord();
+  if (name === 'band') renderBand();
 }
 
 function timelineLen() {
@@ -615,7 +580,6 @@ function renderChords() {
   $('#keyRoot').innerHTML = NOTE.map((n, i) => `<option value="${i}"${i === s.key ? ' selected' : ''}>${n}</option>`).join('');
   $('#keyMode').value = s.mode;
   $('#bpm').value = s.bpm;
-  $('#chordsInMix').checked = s.chordsInMix;
   $('#palette').innerHTML = m.steps.map((_, d) => {
     const c = chordNotes(d);
     return `<button class="chord-btn" type="button" data-deg="${d}"><b>${c.name}</b><small>${c.roman}</small></button>`;
@@ -815,7 +779,7 @@ $('#palette').addEventListener('click', (e) => {
   const b = e.target.closest('[data-deg]');
   if (!b) return;
   const deg = Number(b.dataset.deg), c = audio();
-  playChord(c, master, chordNotes(deg), c.currentTime + 0.02, 1.1);
+  keysChord(c, master, chordNotes(deg), c.currentTime + 0.02, 1.1);
   S.song.prog.push(deg);
   saveSongSoon();
   renderChords();
@@ -844,7 +808,129 @@ $('#bpm').addEventListener('change', (e) => {
   saveSongSoon();
   renderTransport();
 });
-$('#chordsInMix').addEventListener('change', (e) => { S.song.chordsInMix = e.target.checked; saveSongSoon(); });
+
+// Band
+const INSTRUMENTS = [
+  { id: 'drums', title: 'Drums', list: DRUM_PATTERNS, label: 'Beat' },
+  { id: 'bass', title: 'Bass', list: BASS_PATTERNS, label: 'Bass line' },
+  { id: 'guitar', title: 'Guitar', list: GUITAR_PATTERNS, label: 'Part' },
+];
+function renderBand() {
+  const s = S.song, b = s.band;
+  $('#autoTake').innerHTML = S.tracks.length
+    ? S.tracks.map((t, i) => `<option value="${t.id}"${i === S.tracks.length - 1 ? ' selected' : ''}>${esc(t.name)} · ${fmtTime(t.duration, false)}</option>`).join('')
+    : '<option value="">Record a take first</option>';
+  $('#autoBuild').disabled = !S.tracks.length;
+  const needChords = !s.prog.length && (b.bass.on || b.guitar.on);
+  const card = (inst) => {
+    const st = b[inst.id];
+    const kit = inst.id === 'drums' ? `
+      <div class="seg" role="radiogroup" aria-label="Drum kit">
+        ${Object.entries(KIT_NAMES).map(([k, n]) => `<button type="button" role="radio" data-kit="${k}" aria-checked="${st.kit === k}">${n}</button>`).join('')}
+      </div>` : '';
+    return `
+    <article class="inst${st.on ? '' : ' off'}" data-inst="${inst.id}">
+      <header><h4>${inst.title}</h4><button class="inst-on" type="button" data-on aria-pressed="${st.on}">${st.on ? 'ON' : 'OFF'}</button></header>
+      ${kit}
+      <div class="pick">
+        <button class="tr-btn" type="button" data-step="-1" aria-label="Previous ${inst.label.toLowerCase()}">‹</button>
+        <select id="pat-${inst.id}" aria-label="${inst.label}">${inst.list.map((p, i) => `<option value="${i}"${i === st.pattern ? ' selected' : ''}>${i + 1}. ${p.name}</option>`).join('')}</select>
+        <button class="tr-btn" type="button" data-step="1" aria-label="Next ${inst.label.toLowerCase()}">›</button>
+      </div>
+      <div class="vol-row"><span>Vol</span><input type="range" min="0" max="1.5" step="0.01" value="${st.vol}" id="bvol-${inst.id}" aria-label="${inst.title} volume"><output>${Math.round(st.vol * 100)}</output></div>
+    </article>`;
+  };
+  $('#instruments').innerHTML = INSTRUMENTS.map(card).join('') + `
+    <article class="inst${s.chordsInMix ? '' : ' off'}" data-inst="keys">
+      <header><h4>Keys</h4><button class="inst-on" type="button" data-on aria-pressed="${s.chordsInMix}">${s.chordsInMix ? 'ON' : 'OFF'}</button></header>
+      <p class="inst-hint">A soft chord pad. Plays only when the Chords tab has a progression.</p>
+      <div class="vol-row"><span>Vol</span><input type="range" min="0" max="1.5" step="0.01" value="${b.keysVol}" id="bvol-keys" aria-label="Keys volume"><output>${Math.round(b.keysVol * 100)}</output></div>
+    </article>` + (needChords ? '<p class="inst-hint">No chords yet, so bass and guitar stay on the home chord. Add chords in the Chords tab, or use Auto band.</p>' : '');
+}
+function bandChanged() {
+  saveSongSoon();
+  setBandLevels(T.out, S.song);
+  if (!T.playing) return;
+  // Keep looping when the band turns on; stop the loop logic when it turns off.
+  renderTransport();
+}
+$('#instruments').addEventListener('click', (e) => {
+  const card = e.target.closest('.inst');
+  if (!card) return;
+  const id = card.dataset.inst, b = S.song.band;
+  if (e.target.closest('[data-on]')) {
+    if (id === 'keys') S.song.chordsInMix = !S.song.chordsInMix;
+    else b[id].on = !b[id].on;
+    bandChanged();
+    renderBand();
+    return;
+  }
+  const kit = e.target.closest('[data-kit]')?.dataset.kit;
+  if (kit) { b.drums.kit = kit; b.drums.on = true; bandChanged(); renderBand(); return; }
+  const step = e.target.closest('[data-step]')?.dataset.step;
+  if (step) {
+    const n = INSTRUMENTS.find((x) => x.id === id).list.length;
+    b[id].pattern = (b[id].pattern + Number(step) + n) % n;
+    b[id].on = true;
+    bandChanged();
+    renderBand();
+  }
+});
+$('#instruments').addEventListener('change', (e) => {
+  const card = e.target.closest('.inst');
+  if (!card || e.target.tagName !== 'SELECT') return;
+  const st = S.song.band[card.dataset.inst];
+  st.pattern = Number(e.target.value);
+  st.on = true;
+  bandChanged();
+  renderBand();
+});
+$('#instruments').addEventListener('input', (e) => {
+  const card = e.target.closest('.inst');
+  if (!card || e.target.type !== 'range') return;
+  const v = Number(e.target.value), id = card.dataset.inst;
+  if (id === 'keys') S.song.band.keysVol = v; else S.song.band[id].vol = v;
+  card.querySelector('output').textContent = Math.round(v * 100);
+  bandChanged();
+});
+
+$('#autoBuild').addEventListener('click', async () => {
+  const t = S.tracks.find((x) => x.id === $('#autoTake').value);
+  if (!t) return;
+  audio();
+  toast('Listening to your take…', 20000);
+  await wait(30);
+  let fit = null;
+  try {
+    const buf = await bufferFor(t);
+    fit = fitSong(trackPitch(buf, t.start), S.song.bpm);
+  } catch {}
+  hideToast();
+  if (!fit) { toast('No clear melody found. Hum louder, closer to the mic, for at least 4 seconds.', 4500); return; }
+  const before = JSON.stringify({ key: S.song.key, mode: S.song.mode, prog: S.song.prog, band: S.song.band, chordsInMix: S.song.chordsInMix });
+  if (T.playing) await stop();
+  Object.assign(S.song, { key: fit.key, mode: fit.mode, prog: fit.prog, chordsInMix: false });
+  const b = S.song.band;
+  b.drums.on = b.bass.on = b.guitar.on = true;
+  saveSongSoon();
+  renderChords();
+  renderBand();
+  openSheet(`<h3>Your band is ready</h3>
+    <p>Key: <strong>${fit.name}</strong> · ${fit.prog.length} ${fit.prog.length === 1 ? 'bar' : 'bars'} at ${S.song.bpm} BPM</p>
+    <p style="font-family:var(--mono);font-size:13px">${fit.chordNames.map(esc).join(' · ')}</p>
+    <p>Press play to hear it with your take. Change beats, parts and chords any time.</p>
+    <div class="sheet-row"><button class="btn ghost" id="undoBand" type="button">Undo</button>
+    <button class="btn primary" id="playBand" type="button">Play</button></div>`);
+  $('#undoBand').onclick = () => {
+    Object.assign(S.song, JSON.parse(before));
+    saveSongSoon();
+    renderChords();
+    renderBand();
+    closeSheet();
+    toast('Band changes undone');
+  };
+  $('#playBand').onclick = () => { closeSheet(); T.pos = 0; play(); };
+});
 
 // Keep the take if the app goes to the background mid-recording.
 document.addEventListener('visibilitychange', () => { if (document.hidden && T.recording) stop(); });

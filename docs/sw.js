@@ -1,7 +1,7 @@
-// Offline shell: serve from cache, refresh in the background.
-const CACHE = 'takes-v1';
+// Network first so updates arrive on the next launch; cache when offline.
+const CACHE = 'takes-v2';
 const SHELL = [
-  './', 'index.html', 'styles.css', 'app.js', 'recorder-worklet.js', 'manifest.webmanifest',
+  './', 'index.html', 'styles.css', 'app.js', 'band.js', 'recorder-worklet.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 
@@ -27,13 +27,23 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const key = req.mode === 'navigate' ? 'index.html' : req;
-      const hit = await cache.match(key, { ignoreSearch: req.mode === 'navigate' });
-      const fresh = fetch(req)
-        .then((res) => { if (res.ok || res.type === 'opaque') cache.put(key, res.clone()); return res; })
-        .catch(() => hit);
-      if (isFont) return hit || fresh;
-      if (hit) { fresh.catch(() => {}); return hit; }
-      return fresh;
+      const opts = { ignoreSearch: req.mode === 'navigate' };
+      if (isFont) {
+        const hit = await cache.match(key);
+        if (hit) return hit;
+      }
+      try {
+        const res = await Promise.race([
+          fetch(req, { cache: 'no-cache' }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000)),
+        ]);
+        if (res.ok || res.type === 'opaque') cache.put(key, res.clone());
+        return res;
+      } catch {
+        const hit = await cache.match(key, opts);
+        if (hit) return hit;
+        throw new Error('offline');
+      }
     }),
   );
 });
