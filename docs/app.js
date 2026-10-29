@@ -3,7 +3,8 @@
 
 import {
   NOTE, MODES, chordInfo, defaultBand, keysChord, makeBand, setBandLevels, bandPlaying, scheduleStep,
-  DRUM_PATTERNS, BASS_PATTERNS, GUITAR_PATTERNS, KIT_NAMES, trackPitch, fitSong,
+  DRUM_PATTERNS, BASS_PATTERNS, GUITAR_PATTERNS, KIT_NAMES, GUITAR_SOUNDS, BASS_SOUNDS,
+  trackPitch, fitSong, banksFor, loadBank, bankReady,
 } from './band.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -77,6 +78,17 @@ async function bufferFor(t) {
 }
 
 const chordNotes = (deg) => chordInfo(S.song, deg);
+
+// Loads the recorded guitar/bass notes the band needs. If they can't load
+// (offline before first use), the band falls back to synthesized sounds.
+async function ensureSamples() {
+  const need = banksFor(S.song).filter((d) => !bankReady(d));
+  if (!need.length) return;
+  toast('Loading instruments…', 20000);
+  try { await Promise.all(need.map((d) => loadBank(audio(), d))); hideToast(); }
+  catch { toast('Real instruments could not load, so synth sounds will play. Check your connection.', 4000); }
+}
+const prefetchSamples = () => { for (const d of banksFor(S.song)) loadBank(audio(), d).catch(() => {}); };
 function click(c, dest, t, accent) {
   const o = c.createOscillator(), g = c.createGain();
   o.type = 'square'; o.frequency.value = accent ? 1760 : 1100;
@@ -103,6 +115,7 @@ async function play({ countIn = 0 } = {}) {
   if (!T.recording) setSession('playback');
   const live = S.tracks.filter((t) => !t.muted);
   try { await Promise.all(live.map(bufferFor)); } catch { toast('One take could not be loaded.'); }
+  await ensureSamples();
   T.busy = false;
   if (!T.recording && !bandOn() && !metroOn && T.pos >= songEnd() - 0.05) T.pos = 0;
 
@@ -337,6 +350,8 @@ async function exportMix() {
   try {
     const c = audio();
     await Promise.all(live.map(bufferFor));
+    await ensureSamples();
+    toast('Mixing…', 60000);
     const sr = c.sampleRate;
     const oc = new OfflineAudioContext(2, Math.ceil((end + 1) * sr), sr);
     for (const t of live) {
@@ -452,7 +467,7 @@ function showTab(name) {
   for (const p of ['tracks', 'lyrics', 'chords', 'band']) $('#pane-' + p).hidden = p !== name;
   if (name === 'tracks') renderTracks();
   if (name === 'chords') highlightChord();
-  if (name === 'band') renderBand();
+  if (name === 'band') { renderBand(); prefetchSamples(); }
 }
 
 function timelineLen() {
@@ -824,10 +839,13 @@ function renderBand() {
   const needChords = !s.prog.length && (b.bass.on || b.guitar.on);
   const card = (inst) => {
     const st = b[inst.id];
-    const kit = inst.id === 'drums' ? `
-      <div class="seg" role="radiogroup" aria-label="Drum kit">
-        ${Object.entries(KIT_NAMES).map(([k, n]) => `<button type="button" role="radio" data-kit="${k}" aria-checked="${st.kit === k}">${n}</button>`).join('')}
-      </div>` : '';
+    const seg = (label, attr, names, cur) => `
+      <div class="seg" role="radiogroup" aria-label="${label}">
+        ${Object.entries(names).map(([k, n]) => `<button type="button" role="radio" ${attr}="${k}" aria-checked="${cur === k}">${n}</button>`).join('')}
+      </div>`;
+    const kit = inst.id === 'drums' ? seg('Drum kit', 'data-kit', KIT_NAMES, st.kit)
+      : inst.id === 'guitar' ? seg('Guitar sound', 'data-sound', GUITAR_SOUNDS, st.sound ?? 'acoustic')
+      : seg('Bass sound', 'data-sound', BASS_SOUNDS, st.sound ?? 'electric');
     return `
     <article class="inst${st.on ? '' : ' off'}" data-inst="${inst.id}">
       <header><h4>${inst.title}</h4><button class="inst-on" type="button" data-on aria-pressed="${st.on}">${st.on ? 'ON' : 'OFF'}</button></header>
@@ -863,10 +881,13 @@ $('#instruments').addEventListener('click', (e) => {
     else b[id].on = !b[id].on;
     bandChanged();
     renderBand();
+    prefetchSamples();
     return;
   }
   const kit = e.target.closest('[data-kit]')?.dataset.kit;
   if (kit) { b.drums.kit = kit; b.drums.on = true; bandChanged(); renderBand(); return; }
+  const sound = e.target.closest('[data-sound]')?.dataset.sound;
+  if (sound) { b[id].sound = sound; b[id].on = true; bandChanged(); renderBand(); prefetchSamples(); return; }
   const step = e.target.closest('[data-step]')?.dataset.step;
   if (step) {
     const n = INSTRUMENTS.find((x) => x.id === id).list.length;

@@ -1,0 +1,12 @@
+Guitar and bass samples in this folder come from tonejs-instruments
+by Nicholaus P. Brosowsky: https://github.com/nbrosowsky/tonejs-instruments
+License: Creative Commons Attribution 3.0 (CC BY 3.0)
+https://creativecommons.org/licenses/by/3.0/
+
+Original sources (per the library's sample-source-info.txt):
+- Electric bass, electric guitar: Karoryfer Samples
+- Acoustic guitar: University of Iowa Electronic Music Studios
+- Nylon guitar: Freesound, 11573__quartertone__classicalguitar-multisampled
+
+Changes: a subset of notes was selected, leading silence trimmed, length
+cut to 3.5-4 s with a fade-out, and re-encoded to 96 kbps mono MP3.

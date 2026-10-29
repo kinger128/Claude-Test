@@ -35,8 +35,8 @@ export function chordInfo(song, deg) {
 export function defaultBand() {
   return {
     drums: { on: false, kit: 'rock', pattern: 0, vol: 0.8 },
-    bass: { on: false, pattern: 1, vol: 0.8 },
-    guitar: { on: false, pattern: 1, vol: 0.8 },
+    bass: { on: false, pattern: 1, vol: 0.8, sound: 'electric' },
+    guitar: { on: false, pattern: 1, vol: 0.8, sound: 'acoustic' },
     keysVol: 0.8,
   };
 }
@@ -91,6 +91,65 @@ export const GUITAR_PATTERNS = [
 ];
 
 export const KIT_NAMES = { rock: 'Rock kit', bongos: 'Bongos', electro: 'Electronic' };
+export const GUITAR_SOUNDS = { acoustic: 'Acoustic', electric: 'Electric', nylon: 'Nylon', synth: 'Synth' };
+export const BASS_SOUNDS = { electric: 'Electric bass', synth: 'Synth bass' };
+
+// ---------- recorded samples ----------
+// Real guitar and bass notes (tonejs-instruments, CC BY 3.0). Each note plays
+// the nearest recording, re-pitched by at most a semitone or two.
+const SAMPLE_NOTES = {
+  'bass-electric': ['Cs1', 'E1', 'G1', 'As1', 'Cs2', 'E2', 'G2', 'As2', 'Cs3', 'E3', 'G3', 'As3', 'Cs4', 'E4', 'G4', 'As4', 'Cs5'],
+  'guitar-electric': ['Cs2', 'E2', 'Fs2', 'A2', 'C3', 'Ds3', 'Fs3', 'A3', 'C4', 'Ds4', 'Fs4', 'A4', 'C5', 'Ds5', 'Fs5', 'A5', 'C6'],
+  'guitar-acoustic': ['E2', 'G2', 'As2', 'Cs3', 'E3', 'G3', 'As3', 'Cs4', 'E4', 'G4', 'As4', 'Cs5'],
+  'guitar-nylon': ['E2', 'Fs2', 'A2', 'B2', 'Cs3', 'E3', 'Fs3', 'A3', 'B3', 'Cs4', 'E4', 'Fs4', 'A4', 'B4', 'Cs5', 'E5'],
+};
+const BANK = { acoustic: 'guitar-acoustic', electric: 'guitar-electric', nylon: 'guitar-nylon' };
+const PCS = { C: 0, Cs: 1, D: 2, Ds: 3, E: 4, F: 5, Fs: 6, G: 7, Gs: 8, A: 9, As: 10, B: 11 };
+const noteMidi = (n) => (Number(n.slice(-1)) + 1) * 12 + PCS[n.slice(0, -1)];
+const banks = new Map(), ready = new Map();
+const BANK_GAIN = { 'bass-electric': 2.6, 'guitar-electric': 1.5 }; // match the synth levels
+
+export function loadBank(c, dir) {
+  if (!banks.has(dir)) {
+    banks.set(dir, Promise.all(SAMPLE_NOTES[dir].map(async (n) => {
+      const res = await fetch(`samples/${dir}/${n}.mp3`);
+      if (!res.ok) throw new Error('sample ' + n);
+      return { midi: noteMidi(n), buf: await c.decodeAudioData(await res.arrayBuffer()) };
+    })).then((list) => { ready.set(dir, list); return list; })
+      .catch((e) => { banks.delete(dir); throw e; }));
+  }
+  return banks.get(dir);
+}
+// Sample banks the current band settings will play.
+export function banksFor(song) {
+  const b = song.band, out = [];
+  if (b.guitar.on && BANK[b.guitar.sound ?? 'acoustic']) out.push(BANK[b.guitar.sound ?? 'acoustic']);
+  if (b.bass.on && (b.bass.sound ?? 'electric') === 'electric') out.push('bass-electric');
+  return out;
+}
+export const bankReady = (dir) => ready.has(dir);
+
+function sampleNote(c, dest, dir, midi, t, dur, vel, muted) {
+  const list = ready.get(dir);
+  if (!list) return false;
+  let best = list[0];
+  for (const x of list) if (Math.abs(x.midi - midi) < Math.abs(best.midi - midi)) best = x;
+  const rate = Math.pow(2, (midi - best.midi) / 12);
+  const src = c.createBufferSource();
+  src.buffer = best.buf;
+  src.playbackRate.value = rate;
+  const g = c.createGain();
+  const rel = muted ? 0.025 : 0.08;
+  const end = t + Math.max(0.03, Math.min(dur, best.buf.duration / rate - rel - 0.02));
+  vel *= BANK_GAIN[dir] || 1;
+  g.gain.setValueAtTime(vel, t);
+  g.gain.setValueAtTime(vel, end);
+  g.gain.linearRampToValueAtTime(0, end + rel);
+  src.connect(g); g.connect(dest);
+  src.start(t);
+  src.stop(end + rel + 0.02);
+  return true;
+}
 
 // ---------- synth building blocks ----------
 const noiseCache = new WeakMap();
@@ -256,19 +315,19 @@ function pluck(c, dest, midi, t, dur, vel, muted = false) {
   s.start(t);
   s.stop(end + 0.08);
 }
-function guitarEvent(c, dest, ch, stroke, t, dur) {
+function guitarEvent(ch, stroke, t, dur, pluck) {
   const gr = 40 + mod12(ch.root - 40);
   const [, i3, i5] = ch.ints;
   const shape = [gr, gr + i5, gr + 12, gr + 12 + i3, gr + 12 + i5];
   switch (stroke) {
-    case 'D': shape.forEach((m, i) => pluck(c, dest, m, t + i * 0.012, dur, 0.45)); break;
-    case 'U': shape.slice(2).reverse().forEach((m, i) => pluck(c, dest, m, t + i * 0.01, dur, 0.35)); break;
-    case 'M': shape.slice(1).forEach((m, i) => pluck(c, dest, m, t + i * 0.004, Math.min(dur, 0.07), 0.4, true)); break;
-    case 'A': shape.forEach((m, i) => pluck(c, dest, m, t + i * 0.006, Math.min(dur, 0.12), 0.55, true)); break;
-    case 'P5': [gr, gr + 7, gr + 12].forEach((m, i) => pluck(c, dest, m, t + i * 0.004, dur, 0.5)); break;
-    case 'B0': pluck(c, dest, gr, t, dur, 0.55); break;
-    case 'B1': pluck(c, dest, gr + i5 - (gr + i5 - 12 >= 40 ? 12 : 0), t, dur, 0.55); break;
-    default: pluck(c, dest, shape[Number(stroke.slice(1))] ?? gr, t, dur, 0.5);
+    case 'D': shape.forEach((m, i) => pluck(m, t + i * 0.012, dur, 0.45)); break;
+    case 'U': shape.slice(2).reverse().forEach((m, i) => pluck(m, t + i * 0.01, dur, 0.35)); break;
+    case 'M': shape.slice(1).forEach((m, i) => pluck(m, t + i * 0.004, Math.min(dur, 0.07), 0.4, true)); break;
+    case 'A': shape.forEach((m, i) => pluck(m, t + i * 0.006, Math.min(dur, 0.12), 0.55, true)); break;
+    case 'P5': [gr, gr + 7, gr + 12].forEach((m, i) => pluck(m, t + i * 0.004, dur, 0.5)); break;
+    case 'B0': pluck(gr, t, dur, 0.55); break;
+    case 'B1': pluck(gr + i5 - (gr + i5 - 12 >= 40 ? 12 : 0), t, dur, 0.55); break;
+    default: pluck(shape[Number(stroke.slice(1))] ?? gr, t, dur, 0.5);
   }
 }
 
@@ -338,12 +397,23 @@ export function scheduleStep(c, out, song, step, t, sd) {
   }
   if (b.bass.on) {
     const p = BASS_PATTERNS[b.bass.pattern] || BASS_PATTERNS[0];
-    for (const [st, tok, len] of p.ev) if (st === s) bassNote(c, out.bass, bassMidi(ch, tok), tt, len * sd, b.drums.kit === 'electro' && b.drums.on);
+    const real = (b.bass.sound ?? 'electric') === 'electric';
+    for (const [st, tok, len] of p.ev) {
+      if (st !== s) continue;
+      const m = bassMidi(ch, tok);
+      if (!(real && sampleNote(c, out.bass, 'bass-electric', m, tt, len * sd, 0.9, false))) {
+        bassNote(c, out.bass, m, tt, len * sd, !real || (b.drums.kit === 'electro' && b.drums.on));
+      }
+    }
   }
   if (b.guitar.on) {
     const p = GUITAR_PATTERNS[b.guitar.pattern] || GUITAR_PATTERNS[0];
     const dest = p.tone === 'drive' ? out.drive : out.clean;
-    for (const [st, stroke, len] of p.ev) if (st === s) guitarEvent(c, dest, ch, stroke, tt, len * sd);
+    const bank = BANK[b.guitar.sound ?? 'acoustic'];
+    const play = (m, at, d, vel, muted = false) => {
+      if (!(bank && sampleNote(c, dest, bank, m, at, d, vel, muted))) pluck(c, dest, m, at, d, vel, muted);
+    };
+    for (const [st, stroke, len] of p.ev) if (st === s) guitarEvent(ch, stroke, tt, len * sd, play);
   }
 }
 
